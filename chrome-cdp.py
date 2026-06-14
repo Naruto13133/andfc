@@ -2,6 +2,12 @@
 """
 chrome-cdp.py — drive phone Chrome over CDP + Outlook account creator.
 
+Talks to Chrome's DevTools Protocol directly over a WebSocket (see cdp.py),
+using only the pure-Python `websocket-client` — no Playwright/Node, no
+chromedriver. That's what lets it run on raw Termux/Android too. Setup:
+    pip install -r requirements.txt      # just websocket-client
+Still needs `adb forward` to the devtools socket (handled automatically).
+
 Commands:
     forward, info, tabs, open, goto, eval, text, shot, screen, fill, click
     signup [--brightdata]   Create Outlook account (and optional BrightData signup)
@@ -24,7 +30,8 @@ import subprocess
 import sys
 import time
 import urllib.request
-from playwright.sync_api import sync_playwright
+
+import cdp
 
 # ── Names ──────────────────────────────────────────────────────────────
 FIRST_NAMES = [
@@ -542,23 +549,22 @@ def pick_active_page(ctx):
         return ctx.new_page()
     for page in reversed(pages):
         try:
-            if page.evaluate("() => document.visibilityState") == "visible":
+            if page.evaluate("document.visibilityState") == "visible":
                 return page
         except Exception:
             continue
     return pages[-1]
 
 def connect(args):
-    """Return (playwright, browser, context, page) connected to phone Chrome."""
+    """Return (browser, context, page) connected to phone Chrome."""
     ensure_forward(args.serial, args.port, args.socket)
-    pw = sync_playwright().start()
-    browser = pw.chromium.connect_over_cdp(f"http://localhost:{args.port}")
+    browser = cdp.connect(args.port)
     # Android Chrome only ever exposes the single default context.
-    ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+    ctx = browser.contexts[0]
     if args.incognito:
         fresh_ms_session(ctx)
     page = pick_active_page(ctx)
-    return pw, browser, ctx, page
+    return browser, ctx, page
 
 def cmd_forward(args):
     ensure_forward(args.serial, args.port, args.socket)
@@ -577,29 +583,29 @@ def cmd_tabs(args):
         print(f"  - {t.get('title','')[:50]!r}  {t.get('url','')[:70]}")
 
 def cmd_open(args):
-    pw, browser, ctx, _ = connect(args)
+    browser, ctx, _ = connect(args)
     page = ctx.new_page()
     page.goto(args.url, wait_until="domcontentloaded")
     print(f">> Opened: {page.url}\n   title: {page.title()}")
-    pw.stop()
+    browser.close()
 
 def cmd_goto(args):
-    pw, browser, ctx, page = connect(args)
+    browser, ctx, page = connect(args)
     page.goto(args.url, wait_until="domcontentloaded")
     print(f">> {page.url}\n   title: {page.title()}")
-    pw.stop()
+    browser.close()
 
 def cmd_eval(args):
-    pw, browser, ctx, page = connect(args)
-    result = page.evaluate(f"() => ({args.js})")
+    browser, ctx, page = connect(args)
+    result = page.evaluate(args.js)
     print(result)
-    pw.stop()
+    browser.close()
 
 def cmd_text(args):
-    pw, browser, ctx, page = connect(args)
-    txt = page.evaluate("() => document.body ? document.body.innerText : ''")
+    browser, ctx, page = connect(args)
+    txt = page.evaluate("document.body ? document.body.innerText : ''")
     print(txt[:2000])
-    pw.stop()
+    browser.close()
 
 def cmd_shot(args):
     ensure_forward(args.serial, args.port, args.socket)
@@ -626,16 +632,16 @@ def cmd_screen(args):
     print(f">> Saved {args.file}")
 
 def cmd_fill(args):
-    pw, browser, ctx, page = connect(args)
+    browser, ctx, page = connect(args)
     page.fill(args.selector, args.value)
     print(f">> Filled {args.selector!r}")
-    pw.stop()
+    browser.close()
 
 def cmd_click(args):
-    pw, browser, ctx, page = connect(args)
+    browser, ctx, page = connect(args)
     page.click(args.selector)
     print(f">> Clicked {args.selector!r}")
-    pw.stop()
+    browser.close()
 
 # ── Signup command ──────────────────────────────────────────────────────
 def cmd_signup(args):
@@ -650,9 +656,8 @@ def cmd_signup(args):
     year = random.randint(1985, 2005)
     print(f"\n🎯 Creating: {first} {last} | {email}")
 
-    pw = sync_playwright().start()
-    browser = pw.chromium.connect_over_cdp(f"http://localhost:{args.port}")
-    ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+    browser = cdp.connect(args.port)
+    ctx = browser.contexts[0]
     # "Incognito" = clear any existing Microsoft/Outlook login before signup.
     if args.incognito:
         fresh_ms_session(ctx)
@@ -713,8 +718,7 @@ def cmd_signup(args):
             print("  [i] BrightData skipped (use --brightdata to enable)")
 
     finally:
-        ctx.close()
-        pw.stop()
+        browser.close()
 
 # ── CLI ──────────────────────────────────────────────────────────────────
 
