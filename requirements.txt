@@ -1,0 +1,12 @@
+# chrome-cdp.py dependencies.
+#
+# Only Playwright is needed — we attach to the phone's existing Chrome over CDP
+# (connect_over_cdp), so there is NO browser download. Do NOT run
+# `playwright install`; it is unnecessary and painful on ARM/Termux.
+#
+# Everything else the script uses (argparse, json, os, random, re, subprocess,
+# sys, time, urllib) is in the Python standard library.
+#
+# Pinned to the version verified working on the sweetin device (Chrome 149).
+# If the pin fails to install on ARM, loosen it to: playwright
+playwright==1.60.0
